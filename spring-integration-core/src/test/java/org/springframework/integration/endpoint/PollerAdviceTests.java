@@ -37,13 +37,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-
 import org.aopalliance.aop.Advice;
 import org.aopalliance.intercept.Joinpoint;
 import org.aopalliance.intercept.MethodInterceptor;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
 import org.springframework.aop.Advisor;
 import org.springframework.aop.framework.Advised;
 import org.springframework.aop.framework.ProxyFactory;
@@ -62,6 +60,7 @@ import org.springframework.integration.channel.NullChannel;
 import org.springframework.integration.config.EnableIntegration;
 import org.springframework.integration.config.ExpressionControlBusFactoryBean;
 import org.springframework.integration.core.MessageSource;
+import org.springframework.integration.scheduling.MessageSourceSkipAdvice;
 import org.springframework.integration.scheduling.PollSkipAdvice;
 import org.springframework.integration.scheduling.SimplePollSkipStrategy;
 import org.springframework.integration.test.util.OnlyOnceTrigger;
@@ -124,6 +123,27 @@ public class PollerAdviceTests {
 	}
 
 	@Test
+	public void testMessageSourceDefaultDontSkip() throws Exception {
+
+		SourcePollingChannelAdapter adapter = new SourcePollingChannelAdapter();
+		final CountDownLatch latch = new CountDownLatch(1);
+		adapter.setSource(() -> {
+			latch.countDown();
+			return null;
+		});
+		adapter.setTrigger(new OnlyOnceTrigger());
+		configure(adapter);
+		List<Advice> adviceChain = new ArrayList<>();
+		MessageSourceSkipAdvice advice = new MessageSourceSkipAdvice();
+		adviceChain.add(advice);
+		adapter.setAdviceChain(adviceChain);
+		adapter.afterPropertiesSet();
+		adapter.start();
+		assertTrue(latch.await(10, TimeUnit.SECONDS));
+		adapter.stop();
+	}
+
+	@Test
 	public void testSkipSimple() throws Exception {
 		SourcePollingChannelAdapter adapter = new SourcePollingChannelAdapter();
 		class LocalSource implements MessageSource<Object> {
@@ -145,14 +165,56 @@ public class PollerAdviceTests {
 		adapter.setSource(new LocalSource(latch));
 		adapter.setTrigger(new OnlyOnceTrigger());
 		AtomicBoolean ehCalled = new AtomicBoolean();
-		adapter.setErrorHandler(t -> {
-			ehCalled.set(true);
-		});
+		adapter.setErrorHandler(t -> ehCalled.set(true));
 		configure(adapter);
 		List<Advice> adviceChain = new ArrayList<>();
 		SimplePollSkipStrategy skipper = new SimplePollSkipStrategy();
 		skipper.skipPolls();
 		PollSkipAdvice advice = new PollSkipAdvice(skipper);
+		adviceChain.add(advice);
+		adapter.setAdviceChain(adviceChain);
+		adapter.afterPropertiesSet();
+		adapter.start();
+		assertFalse(latch.await(10, TimeUnit.MILLISECONDS));
+		assertFalse(ehCalled.get());
+		adapter.stop();
+		skipper.reset();
+		latch = new CountDownLatch(1);
+		adapter.setSource(new LocalSource(latch));
+		adapter.setTrigger(new OnlyOnceTrigger());
+		adapter.start();
+		assertTrue(latch.await(10, TimeUnit.SECONDS));
+		adapter.stop();
+	}
+
+	@Test
+	public void testMessageSourceSkipSimple() throws Exception {
+		SourcePollingChannelAdapter adapter = new SourcePollingChannelAdapter();
+		class LocalSource implements MessageSource<Object> {
+
+			private final CountDownLatch latch;
+
+			private LocalSource(CountDownLatch latch) {
+				this.latch = latch;
+			}
+
+			@Override
+			public Message<Object> receive() {
+				latch.countDown();
+				return null;
+			}
+
+		}
+		CountDownLatch latch = new CountDownLatch(1);
+		adapter.setSource(new LocalSource(latch));
+		adapter.setTrigger(new OnlyOnceTrigger());
+		AtomicBoolean ehCalled = new AtomicBoolean();
+		adapter.setErrorHandler(t -> ehCalled.set(true));
+		configure(adapter);
+		List<Advice> adviceChain = new ArrayList<>();
+		SimplePollSkipStrategy skipper = new SimplePollSkipStrategy();
+		skipper.skipPolls();
+		MessageSourceSkipAdvice advice = new MessageSourceSkipAdvice(skipper);
 		adviceChain.add(advice);
 		adapter.setAdviceChain(adviceChain);
 		adapter.afterPropertiesSet();

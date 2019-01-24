@@ -62,7 +62,7 @@ public class PollSkipAdvice implements MethodInterceptor {
 	}
 
 
-	private static final class DefaultPollSkipStrategy implements PollSkipStrategy {
+	static final class DefaultPollSkipStrategy implements PollSkipStrategy {
 
 		DefaultPollSkipStrategy() {
 			super();
